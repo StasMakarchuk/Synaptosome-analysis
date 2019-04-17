@@ -18,7 +18,8 @@
 %   potentially detected synaptosome. 
 
 % Author: Ezra Bruggeman, Laser Analytics Group
-% Last updated: 8 Feb 2018
+% Last updated: 10.04.19, Stas Makarchuk - extended for any number of
+% channels
 
 
 clear all
@@ -31,42 +32,36 @@ tic
 
 %directory = 'F:\synaptosomes\2018_10_10_Pedro_5thRound_EGTAK\output_reconstructions\Registered_data';
 %directory = 'E:\Experiments\synaptosomes\Datasets_synaptosomes_20181206_4C_37C\37Cb\Data\thunderSTORM_phys\reconstructions\Registered_data';
-directory = '/Users/pedrovallejo/OneDrive - University Of Cambridge/lag/microscopy work/synaptosomes/test data for synapto-analysis/4Cb_phys';
+directory = 'D:\PostDoc Cambridge\STORM\synapto_data_from_Janin\Sample\output_reconstructions\Registered_data';
 
 % path to folder where outputfolder will be created (if doesn't already exist)
-output_dir = fullfile('/Users/pedrovallejo/OneDrive - University Of Cambridge/lag/microscopy work/synaptosomes/test data for synapto-analysis',filesep);
+output_dir = fullfile('D:\PostDoc Cambridge\STORM\synapto_data_from_Janin\Sample\output_reconstructions\Registered_data',filesep);
 
 repeat           = '4Cb';
 condition        = 'phys';
-channel_token_RC = '_647';
-channel_token_GC = '_561_reg';
-channel_token_BC = '_488_reg';
+%Specify here channels names that are used for file namings (could be one or more channels)
+channel_token    = {'_RC', '_GC_reg'};
+N_channel        = size(channel_token,2); 
 
 % Single molecule reconstruction settings
 
 pixelsize            = 117; % pixelsize in nm
 magnification        = 10; % value of 10 gives 11.7 nm pixels in reconstruction (if pixelsize camera is 117 nm)
-show                 = 0; % 1 to show extra intermediate results
+show                 = 1; % 1 to show extra intermediate results
 show_d               = 0;
 format               = 'thunderstorm'; % reconstruction software used (only thunderstorm)
 format_for_filtering = 'thunderstorm';
 
 % Filtering parameters
 
-max_radius_RC  = 1500; % maximum radius of clusters in red channel
-min_nr_locs_RC = 300;  % minimum nr of locs within min_radius_RC from each localistaion in red channel
-max_radius_GC  = 0;    % maximum radius of clusters in green channel
-min_nr_locs_GC = 0;    % minimum nr of locs within min_radius_GC from each localistaion in green channel
-max_radius_BC  = 0;    % maximum radius of clusters in blue channel
-min_nr_locs_BC = 0;    % minimum nr of locs within min_radius_BC from each localistaion in blue channel
+max_radius     = [0; 0]; % maximum radius of clusters in all chanels respectively (should be the same size as channel_token)
+min_nr_locs    = [0; 0];  % minimum nr of locs within min_radius
 
-P_RC           = 200; % blobs with fewer pixels will be removed from mask of red channel
-P_GC           = 0;   % blobs with fewer pixels will be removed from mask of green channel
-P_BC           = 0;   % blobs with fewer pixels will be removed from mask of blue channel
+P              = [0; 0]; % blobs with fewer pixels will be removed from mask
 
-level_RC       = 0; % threshold (0-1) for mask red   channel (0 for Otsu's threshold)
-level_GC       = 0; % threshold (0-1) for mask green channel (0 for Otsu's threshold)
-level_BC       = 0; % threshold (0-1) for mask blue  channel (0 for Otsu's threshold)
+
+level          = [0; 0] % threshold (0-1) for mask (0 for Otsu's threshold)
+RefCh          = 1;     %number of the channel which is areference channel for synaptosome analysis
 
 sigma_kernel   = 15; % sigma for generating an image (if format = rapidstorm)
 remove_border  = 0; % to remove the edges of images if there are edge artefacts
@@ -105,58 +100,61 @@ end
 
 % Write away workspace variables in a parameter file
 save(fullfile(path_output,'parameters.mat'));
- max_radius_RC = max_radius_RC/magnification;
- max_radius_GC = max_radius_GC/magnification;
- max_radius_BC = max_radius_BC/magnification;
+ max_radius = max_radius/magnification;
 
-% Get list of locfiles of red channel
+
+% Get list of locfiles of first channel
 if ismac
-    filelist = dir([directory strcat('/*',channel_token_RC,'.csv')]);
+    filelist = dir([directory strcat('/*',channel_token{1},'.csv')]);
 elseif ispc 
-    filelist = dir([directory strcat('\*',channel_token_RC,'.csv')]);
+    filelist = dir([directory strcat('\*',channel_token{1},'.csv')]);
 end
-    
+    filelist
 for i = 1:size(filelist,1)
     
     % Get filenames
-    filename_RC = filelist(i).name;
-    area_token = strsplit(filename_RC,'_'); area_token = area_token{1};
-    filename_GC = strcat(area_token,channel_token_GC,'.csv');
-    filename_BC = strcat(area_token,channel_token_BC,'.csv');
+    
+    for nch = 1:N_channel
+        if nch == 1
+            filename{nch} = filelist(i).name;
+            area_token = strsplit(filename{nch},'_'); area_token = area_token{1};
+        else
+            filename{nch,1} = strcat(area_token,channel_token{nch},'.csv');
+        end
+    end
+ 
     
     % Write some info to command window
     disp('##### Synaptosome analysis #####')
     disp(' ')
     disp(['Folder:             ' directory])
-    disp(['File red channel:   ' filename_RC])
-    disp(['File green channel: ' filename_GC])
-    disp(['File blue channel:  ' filename_BC])
+    for nch = 1:N_channel
+        disp(['File for ' num2str(nch) ' channel:   ' filename{nch}])
+    end
+    
     
     % Open a summary file for writing
     summary_file = fopen(fullfile(path_output,strcat(area_token,'_summary.txt')),'wt');
     
     % Read in files
-    locs_RC = readLocFile(fullfile(directory,filename_RC),format);
-    locs_GC = readLocFile(fullfile(directory,filename_GC),format);
-    locs_BC = readLocFile(fullfile(directory,filename_BC),format);
+    for nch = 1:N_channel  locs(nch).channel = readLocFile(fullfile(directory,filename{nch}),format); end
+    
     
     % Record number of localisations before filtering
-    num_locs_RC_prefilter = size(locs_RC,1);
-    num_locs_GC_prefilter = size(locs_GC,1);
-    num_locs_BC_prefilter = size(locs_BC,1);
+    for nch = 1:N_channel  num_locs_prefilter(nch) = size(locs(nch).channel,1); end
     
     % Write away filtered localisations
+    for nch = 1:N_channel  writeLocFile(locs(nch).channel,fullfile(path_output,strcat(area_token,'_locs_', channel_token{nch}, '_raw.csv')),format); end
+  
     
-    writeLocFile(locs_RC,fullfile(path_output,strcat(area_token,'_locs_RC_raw.csv')),format)
-    writeLocFile(locs_GC,fullfile(path_output,strcat(area_token,'_locs_GC_raw.csv')),format)
-    writeLocFile(locs_BC,fullfile(path_output,strcat(area_token,'_locs_BC_raw.csv')),format)
-      
+    % Estimate Fov
+%     Assumes there will be at least one localisation close to the edges
+%     of the Fov in one of the three channels
+    data_for_Fov=[];
+    for nch =1:N_channel  data_for_Fov = [data_for_Fov; locs(nch).channel.x]; end
+    for nch =1:N_channel  data_for_Fov = [data_for_Fov; locs(nch).channel.y]; end
     
-    %% Estimate Fov
-    % Assumes there will be at least one localisation close to the edges
-    % of the Fov in one of the three channels
-    
-    Fov = estimateFov([locs_RC.x; locs_GC.x; locs_GC.x; locs_RC.y; locs_BC.y; locs_BC.y], pixelsize);
+    Fov = estimateFov(data_for_Fov, pixelsize);
     disp(['Estimated Fov:      ' num2str(Fov)])
     disp(' ')
     
@@ -167,494 +165,334 @@ for i = 1:size(filelist,1)
     % cropped out before doing any further processing.
     
     % For removing edge artefacts
-    if remove_border
-        locs_RC_filtered = locs_RC(locs_RC.x > border_width,:);
-        locs_GC_filtered = locs_GC(locs_GC.x > border_width,:);
-        locs_BC_filtered = locs_BC(locs_BC.x > border_width,:);
+    % Edited by Stas Makarchuk 12.04.19
+    if remove_border        
         
-        locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.x < Fov*pixelsize - border_width,:);
-        locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.x < Fov*pixelsize - border_width,:);
-        locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.x < Fov*pixelsize - border_width,:);
-        
-        locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.y > border_width,:);
-        locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.y > border_width,:);
-        locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.y > border_width,:);
-        
-        locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.y < Fov*pixelsize - border_width,:);
-        locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.y < Fov*pixelsize - border_width,:);
-        locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.y < Fov*pixelsize - border_width,:);
-    else
-        locs_RC_filtered = locs_RC;
-        locs_GC_filtered = locs_GC;
-        locs_BC_filtered = locs_BC;
-    end
+        for nch=1:N_channel
+            sLocs = size (locs(nch).channel.x,1);
+            nLocs = 1;
+            for iL = 1:sLocs
+                
+                if locs(nch).channel.x(iL) > border_width & locs(nch).channel.y(iL) > border_width & locs(nch).channel.x(iL) < Fov*pixelsize - border_width & locs(nch).channel.y(iL) < Fov*pixelsize - border_width 
+                    locs_filtered(nch).channel(nLocs,:) = locs(nch).channel(iL,:);
+                    nLocs = nLocs+1;
+                end
+            end
+        end
+         
+     else
+        locs_filtered = locs;
+     end
     
+%     
+%     %% Optional filtering
+%     % The registered localisations filtered to keep only localisations
+%     % detected after 500 frames (because these early frames are usually not
+%     % sparse enough to assure good reconstruction), keep only localisations
+%     % that have a sigma between 40 nm and 400 nm (to avoid grid artefacts
+%     % and exclude localizations that are out of focus) and uncertainty
+%     % smaller than 40 nm and larger than 5 nm (the expected resolution of the reconstructed
+%     % dSTORM images). For the red channel the intensity threshold is set at
+%     % 1000 photons, and for the green and blue channels at 500 photons. 
+%     
     
-    %% Optional filtering
-    % The registered localisations filtered to keep only localisations
-    % detected after 500 frames (because these early frames are usually not
-    % sparse enough to assure good reconstruction), keep only localisations
-    % that have a sigma between 40 nm and 400 nm (to avoid grid artefacts
-    % and exclude localizations that are out of focus) and uncertainty
-    % smaller than 40 nm and larger than 5 nm (the expected resolution of the reconstructed
-    % dSTORM images). For the red channel the intensity threshold is set at
-    % 1000 photons, and for the green and blue channels at 500 photons. 
-    
+
+
     if filter
-        % Filtering red channel ---------------------------------------------------
-        locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.frame       > min_frames ,:);
-        if ~strcmp(format_for_filtering,'rapidstorm')
-            locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.sigma   > min_sigma  ,:);
-            locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.sigma   < max_sigma ,:);
-        end
-        locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.intensity   > min_intensity,:);
-        locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.uncertainty < max_uncertainty  ,:);
-        locs_RC_filtered = locs_RC_filtered(locs_RC_filtered.uncertainty > min_uncertainty  ,:);
+        % Filtering all channels ---------------------------------------------------
         
-        % Filtering green channel -------------------------------------------------
-        locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.frame       > min_frames,:);
-        if ~strcmp(format_for_filtering,'rapidstorm')
-            locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.sigma   > min_sigma  ,:);
-            locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.sigma   < max_sigma,:);
+        for nch = 1:N_channel
+            locs_filtered(nch).channel = locs_filtered(nch).channel(locs_filtered(nch).channel.frame       > min_frames ,:);
+            locs_filtered(nch).channel = locs_filtered(nch).channel(locs_filtered(nch).channel.intensity       > min_intensity ,:);
+            locs_filtered(nch).channel = locs_filtered(nch).channel(locs_filtered(nch).channel.uncertainty       > min_uncertainty ,:);
+            locs_filtered(nch).channel = locs_filtered(nch).channel(locs_filtered(nch).channel.uncertainty       < max_uncertainty ,:);
+            if ~strcmp(format_for_filtering,'rapidstorm')
+                locs(nch).channel = locs_filtered(nch).channel(locs_filtered(nch).channel.sigma   > min_sigma  ,:);
+                locs(nch).channel = locs_filtered(nch).channel(locs_filtered(nch).channel.sigma   < max_sigma ,:);
+            end
         end
         
-        locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.intensity   > min_intensity,:);
-        locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.uncertainty < max_uncertainty ,:);
-        locs_GC_filtered = locs_GC_filtered(locs_GC_filtered.uncertainty > min_uncertainty ,:);
         
-        % Filtering blue channel --------------------------------------------------
-        locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.frame       > min_frames,:);
-        if ~strcmp(format_for_filtering,'rapidstorm')
-            locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.sigma   > min_sigma  ,:);
-            locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.sigma   < max_sigma,:);
-        end      
-        locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.intensity   > min_intensity,:);
-        locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.uncertainty < max_uncertainty ,:);
-        locs_BC_filtered = locs_BC_filtered(locs_BC_filtered.uncertainty > min_uncertainty ,:);
     end
-    
-    % Get number of localisations after filter
-    num_locs_RC_postfilter = size(locs_RC_filtered,1);
-    num_locs_GC_postfilter = size(locs_GC_filtered,1);
-    num_locs_BC_postfilter = size(locs_BC_filtered,1);
-    
-    % calculate overall rejection rate (percentage) after localisation filters
-    overall_rejection_RC = ((num_locs_RC_prefilter-num_locs_RC_postfilter)/num_locs_RC_prefilter)*100;
-    overall_rejection_GC = ((num_locs_GC_prefilter-num_locs_GC_postfilter)/num_locs_GC_prefilter)*100;
-    overall_rejection_BC = ((num_locs_BC_prefilter-num_locs_BC_postfilter)/num_locs_BC_prefilter)*100;
-    
-    fprintf(summary_file,'Overall rejection rate after localisation filtering \n');
-    fprintf(summary_file,'Red   channel: %2.f %%\n',overall_rejection_RC);
-    fprintf(summary_file,'Green channel: %2.f %%\n',overall_rejection_GC);
-    fprintf(summary_file,'Green channel: %2.f %%\n',overall_rejection_GC);
+%     
+%     % Get number of localisations after filter
+
+      for nch=1:N_channel  num_locs_postfilter(nch) = size(locs_filtered(nch).channel,1);  end
+
+%     % calculate overall rejection rate (percentage) after localisation filters
+      for nch=1:N_channel  overall_rejection(nch) = ((num_locs_prefilter(nch) - num_locs_postfilter(nch))/num_locs_prefilter(nch))*100;  end
+      
+      %write in txt files ratio of rejected points
+      fprintf(summary_file,'Overall rejection rate after localisation filtering \n');
+      for nch=1:N_channel fprintf(summary_file,[num2str(nch) '  channel: %2.f %%\n'],overall_rejection(nch));   end
+
+
+%     %% Write away filtered localisations
+      for nch=1:N_channel writeLocFile(locs_filtered(nch).channel,fullfile(path_output,strcat(area_token,['_locs_' num2str(nch) '_channel_filtered.csv'])),format);   end
+        
+%     %% Generate SMLM reconstructions (before density filtering)
+%     
    
-    %% Write away filtered localisations
-    
-    writeLocFile(locs_RC_filtered,fullfile(path_output,strcat(area_token,'_locs_RC_filtered.csv')),format)
-    writeLocFile(locs_GC_filtered,fullfile(path_output,strcat(area_token,'_locs_GC_filtered.csv')),format)
-    writeLocFile(locs_BC_filtered,fullfile(path_output,strcat(area_token,'_locs_BC_filtered.csv')),format)
-       
-    %% Generate SMLM reconstructions (before density filtering)
-    
     % Red channel
-    X_RC = locs_RC_filtered.x;
-    Y_RC = locs_RC_filtered.y;
-    if strcmp(format_for_filtering,'thunderstorm')
-        if (locs_RC_filtered.sigma == 0)
-            sigma_RC = sigma_kernel;
-        else
-            sigma_RC = median(locs_RC_filtered.sigma)/magnification;
-        end 
-    elseif strcmp(format_for_filtering,'rapidstorm')
-        sigma_RC = sigma_kernel;
-    end
-    %sigma_RC = sigma_kernel;
-    intensities = locs_RC_filtered.intensity;
-    img_RC = generateImage(X_RC,Y_RC,sigma_RC,intensities,Fov,pixelsize,magnification);
-    filename = char(strcat(area_token,'_reconstruction_RC.tif'));
-    if ~essence; imwrite(flip(flip(img_RC,2),1), fullfile(path_output, filename)); end
-    if show; figure; imshow(flip(flip(img_RC,2),1)); title('Reconstruction red channel'); end
+      for nch = 1:N_channel 
+            X(nch).channel = locs_filtered(nch).channel.x;
+            Y(nch).channel = locs_filtered(nch).channel.y;
+            if strcmp(format_for_filtering,'thunderstorm')
+                if (locs_filtered(nch).channel.sigma == 0)
+                    sigma(nch) = sigma_kernel;
+                else
+                    sigma(nch) = median(locs_filtered(nch).channel.sigma)/magnification;
+                end 
+            elseif strcmp(format_for_filtering,'rapidstorm')
+                sigma(nch) = sigma_kernel;
+            end
+            
+            intensities = locs_filtered(nch).channel.intensity;
+            img(nch).channel = generateImage(X(nch).channel,Y(nch).channel,sigma(nch),intensities,Fov,pixelsize,magnification);
+            filename{nch} = char(strcat(area_token,['_reconstruction_' num2str(nch) '_channel.tif']));
+            if ~essence; imwrite(flip(flip(img(nch).channel,2),1), fullfile(path_output, filename{nch})); end
+            if show; figure; imshow(flip(flip(img(nch).channel,2),1)); title(['Reconstruction of ' num2str(nch) ' channel']); end
+      end
+
+%     % Get two-colour reconstruction red-green (only for visualization)
+      if N_channel>1
+          for nch1 = 1:N_channel-1
+              for nch2 = nch1+1:N_channel
+                    merged_reconstruction = uint8(zeros(size(img(nch1).channel,1),size(img(nch2).channel,2),3));
+                    merged_reconstruction(:,:,1) = uint8(img(nch1).channel);
+                    merged_reconstruction(:,:,2) = uint8(img(nch2).channel);
+                    filename{nch} = char(strcat(area_token,['_reconstruction_of_' num2str(nch1) '_and_' num2str(nch2) '_channel.tif']));
+                    if ~essence; imwrite(flip(flip(merged_reconstruction,2),1), fullfile(path_output, filename{nch})); end
+                    if show; figure; imshow(flip(flip(merged_reconstruction,2),1)); title(['Reconstruction ' num2str(nch1) ' and ' num2str(nch2) ' channel']); end
+%     
+              end
+          end
+      end
+
+%     % Get all colour reconstruction (only for visualization)
+      if N_channel>2
+          merged_reconstruction = uint8(zeros(size(img(1).channel,1),size(img(2).channel,2),3));
+          for nch = 1:N_channel  merged_reconstruction(:,:,nch) = uint8(img(nch).channel); end
+          filename = char(strcat(area_token,['_reconstruction_of_all_channels.tif']));
+          if ~essence; imwrite(flip(flip(merged_reconstruction,2),1), fullfile(path_output, filename)); end
+          if show; figure; imshow(flip(flip(merged_reconstruction,2),1)); title(['Reconstruction_of_all_channels']); end
+      end
+      
     
-    % Green channel
-    X_GC = locs_GC_filtered.x;
-    Y_GC = locs_GC_filtered.y;
-    if strcmp(format,'thunderstorm')
-         if (locs_GC_filtered.sigma == 0)
-            sigma_GC = sigma_kernel;
-        else
-            sigma_GC = median(locs_GC_filtered.sigma)/magnification;
-        end 
-    elseif strcmp(format,'rapidstorm')
-        sigma_GC = sigma_kernel;
-    end
-    %sigma_GC = sigma_kernel;
-    intensities = locs_GC_filtered.intensity;
-    img_GC = generateImage(X_GC,Y_GC,sigma_GC,intensities,Fov,pixelsize,magnification);
-    filename = char(strcat(area_token,'_reconstruction_GC.tif'));
-    if ~essence; imwrite(flip(flip(img_GC,2),1), fullfile(path_output, filename)); end
-    if show; figure; imshow(flip(flip(img_GC,2),1)); title('Reconstruction green channel'); end
-    
-    % Blue channel
-    X_BC = locs_BC_filtered.x;
-    Y_BC = locs_BC_filtered.y;
-    if strcmp(format,'thunderstorm')
-         if (locs_BC_filtered.sigma == 0)
-            sigma_BC = sigma_kernel;
-        else
-            sigma_BC = median(locs_BC_filtered.sigma)/magnification;
-        end 
-    elseif strcmp(format,'rapidstorm')
-        sigma_BC = sigma_kernel;
-    end
-    %sigma_BC = sigma_kernel;
-    intensities = locs_BC_filtered.intensity;
-    img_BC = generateImage(X_BC,Y_BC,sigma_BC,intensities,Fov,pixelsize,magnification);
-    filename = char(strcat(area_token,'_reconstruction_BC.tif'));
-    if ~essence; imwrite(flip(flip(img_BC,2),1), fullfile(path_output, filename)); end
-    if show; figure; imshow(flip(flip(img_BC,2),1)); title('Reconstruction blue channel'); end
-    
-    % Get two-colour reconstruction red-green (only for visualization)
-    merged_reconstruction_RG = uint8(zeros(size(img_RC,1),size(img_RC,2),3));
-    merged_reconstruction_RG(:,:,1) = uint8(img_RC);
-    merged_reconstruction_RG(:,:,2) = uint8(img_GC);
-    filename = char(strcat(area_token,'_reconstruction_RG.tif'));
-    if ~essence; imwrite(flip(flip(merged_reconstruction_RG,2),1), fullfile(path_output, filename)); end
-    if show; figure; imshow(flip(flip(merged_reconstruction_RG,2),1)); title('Reconstruction RG'); end
-    
-    % Get two-colour reconstruction red-blue (only for visualization)
-    merged_reconstruction_RB = uint8(zeros(size(img_RC,1),size(img_RC,2),3));
-    merged_reconstruction_RB(:,:,1) = uint8(img_RC);
-    merged_reconstruction_RB(:,:,3) = uint8(img_BC);
-    filename = char(strcat(area_token,'_reconstruction_RB.tif'));
-    if ~essence; imwrite(flip(flip(merged_reconstruction_RB,2),1), fullfile(path_output, filename)); end
-    if show; figure; imshow(flip(flip(merged_reconstruction_RB,2),1)); title('Reconstruction RB'); end
-    
-    % Get three-colour reconstruction (only for visualization)
-    merged_reconstruction_RGB = uint8(zeros(size(img_RC,1),size(img_RC,2),3));
-    merged_reconstruction_RGB(:,:,1) = uint8(img_RC);
-    merged_reconstruction_RGB(:,:,2) = uint8(img_GC);
-    merged_reconstruction_RGB(:,:,3) = uint8(img_BC);
-    filename = char(strcat(area_token,'_reconstruction_RGB.tif'));
-    imwrite(flip(flip(merged_reconstruction_RGB,2),1), fullfile(path_output, filename));
-    if show; figure; imshow(flip(flip(merged_reconstruction_RGB,2),1)); title('Reconstruction RGB'); end
-    
-    
-    %% Density filtering
-    % To improve detection of synaptosomes in the red channel, some density
-    % filtering is applied (the images are cluttered). Only localisations
-    % that have a minimum number of neighbouring localisations within some
-    % specified search radius are kept. Considering the radius of a
-    % synaptosome is about 500 nm, this value is chosen for the search
-    % radius. By looking at a number of images and testing out different
-    % parameters, the minimum number of localisations within this radius
-    % was chosen to be 500. The variables containing the unfiltered
-    % localisations are cleared after filtering to save memory.
-    
+%     
+%     %% Density filtering
+%     % To improve detection of synaptosomes in the red channel, some density
+%     % filtering is applied (the images are cluttered). Only localisations
+%     % that have a minimum number of neighbouring localisations within some
+%     % specified search radius are kept. Considering the radius of a
+%     % synaptosome is about 500 nm, this value is chosen for the search
+%     % radius. By looking at a number of images and testing out different
+%     % parameters, the minimum number of localisations within this radius
+%     % was chosen to be 500. The variables containing the unfiltered
+%     % localisations are cleared after filtering to save memory.
+%     
     fprintf(summary_file,'Rejection Rate after density filtering \n');
-    % Density filtering red channel -------------------------------------------
-    if max_radius_RC ~= 0 && min_nr_locs_RC ~= 0
-        % Perform density filtering
-        [locs_RC_density_filtered,indeces_RC,~] = ...
-            nearestNeighbourDensityFilter([locs_RC_filtered.x locs_RC_filtered.y], ...
-            max_radius_RC,min_nr_locs_RC,show_d); disp(' ');
-        if isempty(locs_RC_density_filtered)
-            disp('All localizations in the red channel were filtered out during density filtering!');
-            continue
+    % Density filtering all channels -------------------------------------------
+    for nch = 1:N_channel
+        if max_radius(nch)~= 0 && min_nr_locs(nch) ~= 0
+            % Perform density filtering
+            [locs_density_filtered(nch).channel,indeces(nch).channel,~] = ...
+                nearestNeighbourDensityFilter([locs_filtered(nch).channel.x locs_filtered(nch).channel.y], ...
+                max_radius(nch),min_nr_locs(nch),show_d); disp(' ');
+            if isempty(locs_density_filtered)
+                disp(['All localizations in the ' num2str(nch) ' channel were filtered out during density filtering!']);
+                continue
+            else
+                nr_locs_before(nch) = size(locs_filtered(nch).channel.x,1);
+                nr_locs_after(nch)  = size(locs_density_filtered(nch).channel,1);
+                fprintf(summary_file,[num2str(nch)  ' channel: %1.f %%\n'], ((nr_locs_before(nch)-nr_locs_after(nch))/nr_locs_before(nch))*100);
+            end
+            % Generate image from filtered localizations
+            X(nch).channel = locs_density_filtered(nch).channel(:,1);
+            Y(nch).channel = locs_density_filtered(nch).channel(:,2);
+            if strcmp(format_for_filtering,'thunderstorm')
+                sigma(nch) = median(locs_filtered(nch).channel.sigma)/magnification;
+            elseif strcmp(format_for_filtering,'rapidstorm')
+                sigma(nch) = sigma_kernel;
+            end
+            %sigma_RC = sigma_kernel;
+            intensities = array2table([indeces(nch).channel locs_filtered(nch).channel.intensity],'VariableNames',{'id','intensity'});
+            intensities_filtered = intensities(intensities.id == 1,:);
+            intensities_filtered = intensities_filtered.intensity;
+
+            img(nch).channel = generateImage(X(nch).channel,Y(nch).channel,sigma(nch),intensities_filtered,Fov,pixelsize,magnification);
+            filename{nch} = char(strcat(area_token,['_reconstruction_' num2str(nch) '_channel_density_filtered.tif']));
+            if ~essence; imwrite(flip(flip(img(nch).channel,2),1), fullfile(path_output, filename{nch})); end
+            if show; figure; imshow(flip(flip(img(nch).channel,2),1)); title(['Reconstruction of ' num2str(nch) ' channel after density filtering']); end
         else
-            nr_locs_before = size(locs_RC_filtered.x,1);
-            nr_locs_after  = size(locs_RC_density_filtered,1);
-            fprintf(summary_file,'Red   channel: %1.f %%\n', ((nr_locs_before-nr_locs_after)/nr_locs_before)*100);
+            locs_density_filtered(nch).channel = [locs_filtered(nch).channel.x locs_filtered(nch).channel.y];
+            fprintf(summary_file,[num2str(nch) ' channel: 100 %%\n']);
         end
-        % Generate image from filtered localizations
-        X_RC = locs_RC_density_filtered(:,1);
-        Y_RC = locs_RC_density_filtered(:,2);
-        if strcmp(format_for_filtering,'thunderstorm')
-            sigma_RC = median(locs_RC_filtered.sigma)/magnification;
-        elseif strcmp(format_for_filtering,'rapidstorm')
-            sigma_RC = sigma_kernel;
-        end
-        %sigma_RC = sigma_kernel;
-        intensities = array2table([indeces_RC locs_RC_filtered.intensity],'VariableNames',{'id','intensity'});
-        intensities_filtered = intensities(intensities.id == 1,:);
-        intensities_filtered = intensities_filtered.intensity;
-        
-        img_RC = generateImage(X_RC,Y_RC,sigma_RC,intensities_filtered,Fov,pixelsize,magnification);
-        filename = char(strcat(area_token,'_reconstruction_RC_density_filtered.tif'));
-        if ~essence; imwrite(flip(flip(img_RC,2),1), fullfile(path_output, filename)); end
-        if show; figure; imshow(flip(flip(img_RC,2),1)); title('Reconstruction red channel after density filtering'); end
-    else
-        locs_RC_density_filtered = [locs_RC_filtered.x locs_RC_filtered.y];
-        fprintf(summary_file,'Red   channel: 100 %%\n');
     end
-    clear var locs_RC % Clear variable containing unfiltered data to save memory
     
-    % Density filtering green channel -----------------------------------------
-    if max_radius_GC ~= 0 && min_nr_locs_GC ~= 0
-        [locs_GC_density_filtered, indeces_GC, numNeighbours_GC] = ...
-            nearestNeighbourDensityFilter([locs_GC_filtered.x locs_GC_filtered.y], ...
-            max_radius_GC,min_nr_locs_GC,show); disp(' ');
-        if isempty(locs_GC_density_filtered) % If no localizations remain after density filtering
-            disp('All localizations in the green channel were filtered out during density filtering!');
-            return
-        else
-            nr_locs_before = size(locs_GC_filtered.x,1);
-            nr_locs_after  = size(locs_GC_density_filtered,1);
-            fprintf(summary_file,'Green channel: %1.f %%\n', ((nr_locs_before-nr_locs_after)/nr_locs_before)*100);
-        end
-        % Generate image from filtered localisations
-        X_GC = locs_GC_density_filtered(:,1);
-        Y_GC = locs_GC_density_filtered(:,2);
-        if strcmp(format_for_filtering,'thunderstorm')
-            sigma_GC = median(locs_GC_filtered.sigma)/magnification;
-        elseif strcmp(format_for_filtering,'rapidstorm')
-            sigma_GC = sigma_kernel;
-        end
-        %sigma_GC = sigma_kernel;
-        intensities = array2table([indeces_GC locs_GC_filtered.intensity],'VariableNames',{'id','intensity'});
-        intensities_filtered = intensities(intensities.id == 1,:);
-        intensities_filtered = intensities_filtered.intensity;
-        
-        img_GC = generateImage(X_GC,Y_GC,sigma_GC,intensities_filtered,Fov,pixelsize,magnification);
-        filename = char(strcat(area_token,'_reconstruction_GC_density_filtered.tif'));
-        if ~essence; imwrite(flip(flip(img_GC,2),1), fullfile(path_output, filename)); end
-        if show; figure; imshow(flip(flip(img_GC,2),1)); title('Reconstruction green channel after density filtering'); end
-    else
-        locs_GC_density_filtered = [locs_GC_filtered.x locs_GC_filtered.y];
-        fprintf(summary_file,'Green channel: 100 %%\n');
-    end
-    clear var locs_GC % Clear variable containing unfiltered data to save memory
-    
-    % Density filtering blue channel ------------------------------------------
-    if max_radius_BC ~= 0 && min_nr_locs_BC ~= 0
-        [locs_BC_density_filtered, indeces_BC, numNeighbours_BC] = ...
-            nearestNeighbourDensityFilter([locs_BC_filtered.x locs_BC_filtered.y], ...
-            max_radius_BC,min_nr_locs_BC,show); disp(' ');
-        if isempty(locs_BC_density_filtered) % If no localizations remain after density filtering
-            disp('All localizations in the blue channel were filtered out during density filtering!');
-            return
-        else
-            nr_locs_before = size(locs_BC_filtered.x,1);
-            nr_locs_after  = size(locs_BC_density_filtered,1);
-            fprintf(summary_file,'Blue  channel: %1.f %%\n\n', ((nr_locs_before-nr_locs_after)/nr_locs_before)*100);
-        end
-        % Generate image from filtered localizations
-        X_BC = locs_BC_density_filtered(:,1);
-        Y_BC = locs_BC_density_filtered(:,2);
-        if strcmp(format_for_filtering,'thunderstorm')
-            sigma_BC = median(locs_BC_filtered.sigma)/magnification;
-        elseif strcmp(format_for_filtering,'rapidstorm')
-            sigma_BC = sigma_kernel;
-        end
-        %sigma_BC = sigma_kernel;
-        intensities = array2table([indeces_BC locs_BC_filtered.intensity],'VariableNames',{'id','intensity'});
-        intensities_filtered = intensities(intensities.id == 1,:);
-        intensities_filtered = intensities_filtered.intensity;
-        
-        img_BC = generateImage(X_BC,Y_BC,sigma_BC,intensities_filtered,Fov,pixelsize,magnification);
-        filename = char(strcat(area_token,'_reconstruction_BC_density_filtered.tif'));
-        if ~essence; imwrite(flip(flip(img_BC,2),1), fullfile(path_output, filename)); end
-        if show; figure; imshow(flip(flip(img_BC,2),1)); title('Reconstruction blue channel after density filtering'); end
-    else
-        locs_BC_density_filtered = [locs_BC_filtered.x locs_BC_filtered.y];
-        fprintf(summary_file,'Blue  channel: 100 %%\n\n');
-    end
-    clear var locs_BC % Clear variable containing unfiltered data to conserve memory
-    
-    
-    %% Get binary mask for all three channels
-    % First an image is generated from the filtered localisations. The
-    % magnification should be chosen to match the resolution of the
-    % reconstruction (in our case the pixelsize of the camera is 117 nm and
-    % the mean resolution of the reconstructions 30 nm (as determined by
-    % FRC), so a magnification = 10 is used to get effective pixelsize of
-    % 11.7 nm which meets the Nyquist criterion). The generated image is
-    % thresholded using Otsu's threshold to get a binary mask. In the red
-    % channel, blobs in the mask that are smaller than some amount of
-    % pixels P are filled (because they probably are not synaptosomes).
-    
+        clear var locs % Clear variable containing unfiltered data to save memory
+%
+%     
+%     %% Get binary mask for all three channels
+%     % First an image is generated from the filtered localisations. The
+%     % magnification should be chosen to match the resolution of the
+%     % reconstruction (in our case the pixelsize of the camera is 117 nm and
+%     % the mean resolution of the reconstructions 30 nm (as determined by
+%     % FRC), so a magnification = 10 is used to get effective pixelsize of
+%     % 11.7 nm which meets the Nyquist criterion). The generated image is
+%     % thresholded using Otsu's threshold to get a binary mask. In the red
+%     % channel, blobs in the mask that are smaller than some amount of
+%     % pixels P are filled (because they probably are not synaptosomes).
+%     
     fprintf(summary_file,'Threshold (Otsu''s method or user-specified):\n');
+%     
+    % Binarize image to get a mask in all channels
+     for nch = 1:N_channel   
+        if level == 0 % Get automatic threshold
+            level_i = graythresh(img(nch).channel);
+            disp(['Automatic threshold for ' num2str(nch) ' channel: ' num2str(level_i)]);
+        else
+            level_i = level(nch);
+            disp(['Specified threshold for red ' num2str(nch) ' channel: ' num2str(level_i)]);
+        end
+        fprintf(summary_file,[ num2str(nch) ' channel: %f\n'],level_i);
+        mask(nch).channel = im2bw(img(nch).channel,level_i);
+
+        % Remove blobs that are too small
+        mask(nch).channel = bwareaopen(mask(nch).channel,P(nch));
+        if show
+            figure;
+            imshow(flip(flip(mask(nch).channel,2),1));
+            title(sprintf([num2str(nch) ' channel after bwareaopen (P = %d)'], P(nch)));
+        end
+        if ~essence
+            filename{nch} = strcat(area_token,'_detected_synaptosomes.tif');
+            imwrite(flip(flip(mask(nch).channel,2),1), fullfile(path_output,filename{nch}));
+        end
+     end
+
+
+%     
+%     % Get all channels image mask ------------------------------------------------------
+    merged_mask = zeros(size(mask(1).channel,1),size(mask(1).channel,2),3);
     
-    % Red channel -------------------------------------------------------------
-    % Binarize image to get a mask
-    if level_RC == 0 % Get automatic threshold
-        level_RC_i = graythresh(img_RC);
-        disp(['Automatic threshold for red   channel: ' num2str(level_RC_i)]);
-    else
-        level_RC_i = level_RC;
-        disp(['Specified threshold for red   channel: ' num2str(level_RC_i)]);
-    end
-    fprintf(summary_file,'Red   channel: %f\n',level_RC_i);
-    mask_RC = im2bw(img_RC,level_RC_i);
-    
-    % Remove blobs that are too small
-    mask_RC = bwareaopen(mask_RC,P_RC);
-    if show
-        figure;
-        imshow(flip(flip(mask_RC,2),1));
-        title(sprintf('Red channel after bwareaopen (P = %d)', P_RC));
-    end
-    if ~essence
-        filename = strcat(area_token,'_detected_synaptosomes.tif');
-        imwrite(flip(flip(mask_RC,2),1), fullfile(path_output,filename));
-    end
-    
-    
-    % Green channel -----------------------------------------------------------
-    % Binarize image to get a mask
-    if level_GC == 0 % Get automatic threshold
-        level_GC_i = graythresh(img_GC);
-        disp(['Automatic threshold for green channel: ' num2str(level_GC_i)]);
-    else
-        level_GC_i = level_GC;
-        disp(['Automatic threshold for green channel: ' num2str(level_GC_i)]);
-    end
-    fprintf(summary_file,'Green channel: %f\n',level_GC_i);
-    mask_GC = im2bw(img_GC,level_GC_i);
-    
-    % Remove blobs that are too small
-    mask_GC = bwareaopen(mask_GC,P_GC);
-    if show
-        figure;
-        imshow(flip(flip(mask_GC,2),1));
-        title(sprintf('Green channel after bwareaopen (P = %d)', P_GC));
-    end
-    
-    % Blue channel ------------------------------------------------------------
-    % Binarize image to get a mask
-    if level_BC == 0 % Get automatic threshold
-        level_BC_i = graythresh(img_BC);
-        disp(['Automatic threshold for blue  channel: ' num2str(level_BC_i)]); disp(' ');
-    else
-        level_BC_i = level_BC;
-        disp(['Automatic threshold for blue  channel: ' num2str(level_BC_i)]); disp(' ');
-    end
-    fprintf(summary_file,'Blue  channel: %f\n',level_BC_i);
-    mask_BC = im2bw(img_BC,level_BC_i);
-    
-    % Remove blobs that are too small
-    mask_BC = bwareaopen(mask_BC,P_BC);
-    if show
-        figure;
-        imshow(flip(flip(mask_BC,2),1));
-        title(sprintf('Blue channel after bwareaopen (P = %d)', P_BC));
-    end
-    
-    % Get RGB image mask ------------------------------------------------------
-    merged_mask = zeros(size(mask_RC,1),size(mask_RC,2),3);
-    merged_mask(:,:,1) = mask_RC;
-    merged_mask(:,:,2) = mask_GC;
-    merged_mask(:,:,3) = mask_BC;
-    filename = char(strcat(area_token,'_masksRGB.tif'));
-    imwrite(flip(flip(merged_mask,2),1), fullfile(path_output, filename));
+    for nch = 1:N_channel merged_mask(:,:,nch) = mask(nch).channel; end
+    Filename = char(strcat(area_token,'_masks_all_channels.tif'));
+    imwrite(flip(flip(merged_mask,2),1), fullfile(path_output, Filename));
     if show; figure; imshow(flip(flip(merged_mask,2),1)); title('Merged channels'); end
-    
-    
-    %% Calculate overlap between channels for all potential synaptosomes
-    
-    % Get labeled mask of red channel
-    mask_RC_labeled = bwlabel(mask_RC);
-    
-    % Get number of potential synaptosomes detected
-    numberOfClusters = max(max(mask_RC_labeled));
-    disp([num2str(numberOfClusters) ' potential synaptosomes detected.']); disp(' ');
-    fprintf(summary_file,'%d potential synaptosomes detected.\n',numberOfClusters);
-    
-    if numberOfClusters > 0
-    
-        % Get centroids of the synaptosomes
-        synaptosomeMeasurements = regionprops(mask_RC_labeled,mask_RC_labeled,'all');
-        centroids = [synaptosomeMeasurements.Centroid];
-        x_centroid = centroids(1:2:end-1);
-        y_centroid = centroids(2:2:end);
+%     
+%     
+%     %% Calculate overlap between channels for all potential synaptosomes
+%     if we have more than one channel
+    if N_channel>1
+    %     % Get labeled mask of reference for synaptosome channel 
+         mask_labeled = bwlabel(mask(RefCh).channel);
+    %     
+    %     % Get number of potential synaptosomes detected
+         numberOfClusters = max(max(mask_labeled));
+         disp([num2str(numberOfClusters) ' potential synaptosomes detected.']); disp(' ');
+         fprintf(summary_file,'%d potential synaptosomes detected.\n',numberOfClusters);
 
-        % Get area of the synaptosomes
-        areas = [synaptosomeMeasurements.Area];
-        % areas = areas*(magnification^2); % correct here for magnification factor, or do it later in analysis
+        if numberOfClusters > 0
 
-        % Loop over detected synaptosomes and calculate their overlap with clusters
-        % in the green and blue channel as a percentage, and a weighted overlap
-        % using the image intensities
-        overlap_perc_GC = zeros(1,numberOfClusters);
-        overlap_perc_BC = zeros(1,numberOfClusters);
+            % Get centroids of the synaptosomes
+            synaptosomeMeasurements = regionprops(mask_labeled,mask_labeled,'all');
+            centroids = [synaptosomeMeasurements.Centroid];
+            x_centroid = centroids(1:2:end-1);
+            y_centroid = centroids(2:2:end);
 
-        weighted_overlap_GC = zeros(1,numberOfClusters);
-        weighted_overlap_BC = zeros(1,numberOfClusters);
+            % Get area of the synaptosomes
+            areas = [synaptosomeMeasurements.Area];
+            % areas = areas*(magnification^2); % correct here for magnification factor, or do it later in analysis
 
-        for j = 1:numberOfClusters
+            % Loop over detected synaptosomes and calculate their overlap with clusters
+            % in the green and blue channel as a percentage, and a weighted overlap
+            % using the image intensities
+            
+            
+            overlap_perc = zeros(N_channel, numberOfClusters); 
+            weighted_overlap = zeros(N_channel, numberOfClusters); 
+            for j = 1:numberOfClusters
 
-            disp(['Synaptosome ' num2str(j) '/' num2str(numberOfClusters)]);
+                disp(['Synaptosome ' num2str(j) '/' num2str(numberOfClusters)]);
 
-            % Get mask for current synaptosome only
-            maskCurrentSynaptosome = mask_RC_labeled;
-            maskCurrentSynaptosome(maskCurrentSynaptosome~=j) = 0;
-            maskCurrentSynaptosome(maskCurrentSynaptosome==j) = 1;
+                % Get mask for current synaptosome only
+                maskCurrentSynaptosome = mask_labeled;
+                maskCurrentSynaptosome(maskCurrentSynaptosome~=j) = 0;
+                maskCurrentSynaptosome(maskCurrentSynaptosome==j) = 1;
 
-            % Calculate percentage area overlap with green channel
-            overlap_with_GC_mask = and(logical(mask_GC),logical(maskCurrentSynaptosome));
-            overlap_with_GC = (sum(overlap_with_GC_mask)/sum(logical(maskCurrentSynaptosome)))*100;
-            overlap_perc_GC(j) = overlap_with_GC;
-            disp([num2str(overlap_with_GC) '% overlap with green channel.']);
+                % Calculate percentage area overlap with green channel
+                % we take all channels excep
+                for nch = 1:N_channel
+                    overlap_with_mask(nch).channel = and(logical(mask(nch).channel),logical(maskCurrentSynaptosome));
+                    overlap = (sum(overlap_with_mask(nch).channel)/sum(logical(maskCurrentSynaptosome)))*100;
+                    overlap_perc(nch,j) = overlap;
+                    disp([num2str(overlap) ['% overlap with ' num2str(nch) ' channel.']]);
+                end
+               
+                % Apply mask to all channels
+                for nch = 1:N_channel
+                    if nch==RefCh
+                        masked_SR_img(nch).channel   = logical(maskCurrentSynaptosome).*double(img(nch).channel);
+                    else
+                        masked_SR_img(nch).channel = logical(mask(nch).channel).*double(img(nch).channel);
+                    end
+                end
+                
+                % Get weighted overlap for all channels except reference
+                % channel
+                for nch = 1:N_channel
+                    if nch~=RefCh
+                    X(nch).channel = getColocCoefficient(masked_SR_img(RefCh).channel,masked_SR_img(nch).channel);
+                    weighted_overlap(nch,j) = X(nch).channel.mandersCoeff;
+                    end
+                end
+                
+                disp(' ');
+            end
 
-            % Calculate percentage area overlap with blue channel
-            overlap_with_BC_mask = and(logical(mask_BC),logical(maskCurrentSynaptosome));
-            overlap_with_BC = (sum(overlap_with_BC_mask)/sum(logical(maskCurrentSynaptosome)))*100;
-            overlap_perc_BC(j) = overlap_with_BC;
-            disp([num2str(overlap_with_BC) '% overlap with blue channel.']);
+            % Summarize meaurements in a table
+            synaptosome_ID = 1:numberOfClusters;
+            results = [synaptosome_ID' x_centroid' y_centroid' areas'];
+            %go through all non ref channels for overlap, weighted overlap
+            %and names
+            Names=[];
+            for nch=1:N_channel 
+                if nch~=RefCh    
+                results = [results overlap_perc(nch,:).' weighted_overlap(nch,:).']; 
+                Names = {Names, ['Overlap_with_' num2str(nch) '_channel'], ['Weighted_overlap_with_' num2str(nch) '_channel']};    
+                end
+            end
+            Names = Names(2:end);
+             
+            results = array2table(results,'VariableNames', [{'ID','xCentroid','yCentroid', 'Area',},Names]);
+            filename2 = char(strcat(area_token,'_results.csv'));
+            writetable(results,fullfile(path_output, filename2));
 
-            % Apply mask to all channels
-            masked_red_SR_img   = logical(maskCurrentSynaptosome).*double(img_RC);
-            masked_green_SR_img = logical(mask_GC).*double(img_GC);
-            masked_blue_SR_img  = logical(mask_BC).*double(img_BC);
-
-            % Get weighted overlap for red and green channel
-            X = getColocCoefficient(masked_red_SR_img,masked_green_SR_img);
-            weighted_overlap_GC(j) = X.mandersCoeff;
-
-            % Get weighted overlap for red and green channel
-            X = getColocCoefficient(masked_red_SR_img,masked_blue_SR_img);
-            weighted_overlap_BC(j) = X.mandersCoeff;
-            disp(' ');
+            fclose(summary_file);
+            %% Plot results
+            
+            % Overlap the reference channel with all non -reference
+            for nch=1:N_channel
+                if nch~=RefCh
+                    mask2channels = zeros(size(mask(RefCh).channel,1),size(mask(RefCh).channel,2),3);
+                    mask2channels(:,:,1) = mask(RefCh).channel;
+                    mask2channels(:,:,2) = mask(nch).channel;
+                    if show
+                        figure;
+                        imshow(flip(flip(mask2channels,2),1));
+                        title([num2str(RefCh) ' channel and ' num2str(nch) ' channel'],'FontSize',15)
+                    end
+                    if ~essence
+                        filename3 = char(strcat(area_token,['_overlap_' num2str(nch) '_channel.tif']));
+                        imwrite(flip(flip(mask2channels,2),1), fullfile(path_output, filename3));
+                    end
+                end
+            end
+           
+        else
+            continue
         end
-
-        % Summarize meaurements in a table
-        synaptosome_ID = 1:numberOfClusters;
-        results = [synaptosome_ID' x_centroid' y_centroid' areas' overlap_perc_GC' overlap_perc_BC' weighted_overlap_GC' weighted_overlap_BC'];
-        results = array2table(results,'VariableNames', {'ID','xCentroid','yCentroid','Area','OverlapWithGreen','OverlapWithBlue','WeightedOverlapWithGreen','WeightedOverlapWithBlue'});
-        filename = char(strcat(area_token,'_results.csv'));
-        writetable(results,fullfile(path_output, filename));
-
-        fclose(summary_file);
-        %% Plot results
-
-        % Overlap red and green channel (masks)
-        mask_RC_GC = zeros(size(mask_RC,1),size(mask_RC,2),3);
-        mask_RC_GC(:,:,1) = mask_RC;
-        mask_RC_GC(:,:,2) = mask_GC;
-        if show
-            figure;
-            imshow(flip(flip(mask_RC_GC,2),1));
-            title('Red and green channel','FontSize',15)
-        end
-        if ~essence
-            filename = char(strcat(area_token,'_overlap_green.tif'));
-            imwrite(flip(flip(mask_RC_GC,2),1), fullfile(path_output, filename));
-        end
-
-        % Overlap red and blue channel (masks)
-        mask_RC_BC = zeros(size(mask_RC,1),size(mask_RC,2),3);
-        mask_RC_BC(:,:,1) = mask_RC;
-        mask_RC_BC(:,:,3) = mask_BC;
-        if show
-            figure;
-            imshow(flip(flip(mask_RC_BC,2),1));
-            title('Red and blue channel','FontSize',15);
-        end
-        if ~essence
-            name_mask = char(strcat(area_token,'_overlap_blue.tif'));
-            imwrite(flip(flip(mask_RC_BC,2),1), fullfile(path_output, name_mask));
-        end
-    else
-        continue
     end
 end
 
